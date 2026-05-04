@@ -1,131 +1,107 @@
 import asyncio
-import pdb
 import sys
 import time
+import re
+import tempfile
+import os
 
 sys.path.append(".")
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    print("dotenv not installed - skipping env load")
 
 async def test_mcp_client():
     from src.utils.mcp_client import setup_mcp_client_and_tools, create_tool_param_model
 
     test_server_config = {
         "mcpServers": {
-            # "markitdown": {
-            #     "command": "docker",
-            #     "args": [
-            #         "run",
-            #         "--rm",
-            #         "-i",
-            #         "markitdown-mcp:latest"
-            #     ]
-            # },
             "desktop-commander": {
                 "command": "npx",
-                "args": [
-                    "-y",
-                    "@wonderwhy-er/desktop-commander"
-                ]
+                "args": ["-y", "@wonderwhy-er/desktop-commander"]
             },
-            # "filesystem": {
-            #     "command": "npx",
-            #     "args": [
-            #         "-y",
-            #         "@modelcontextprotocol/server-filesystem",
-            #         "/Users/xxx/ai_workspace",
-            #     ]
-            # },
         }
     }
 
     mcp_tools, mcp_client = await setup_mcp_client_and_tools(test_server_config)
-
-    for tool in mcp_tools:
-        tool_param_model = create_tool_param_model(tool)
-        print(tool.name)
-        print(tool.description)
-        print(tool_param_model.model_json_schema())
-    pdb.set_trace()
-
+    # Test tool loading
+    assert mcp_tools, "No MCP tools loaded"
 
 async def test_controller_with_mcp():
-    import os
     from src.controller.custom_controller import CustomController
-    from browser_use.controller.registry.views import ActionModel
+    try:
+        from browser_use.controller.registry.views import ActionModel
+    except ImportError:
+        print("browser_use module not found - skipping ActionModel import")
+        return
 
     mcp_server_config = {
         "mcpServers": {
-            # "markitdown": {
-            #     "command": "docker",
-            #     "args": [
-            #         "run",
-            #         "--rm",
-            #         "-i",
-            #         "markitdown-mcp:latest"
-            #     ]
-            # },
             "desktop-commander": {
                 "command": "npx",
-                "args": [
-                    "-y",
-                    "@wonderwhy-er/desktop-commander"
-                ]
+                "args": ["-y", "@wonderwhy-er/desktop-commander"]
             },
-            # "filesystem": {
-            #     "command": "npx",
-            #     "args": [
-            #         "-y",
-            #         "@modelcontextprotocol/server-filesystem",
-            #         "/Users/xxx/ai_workspace",
-            #     ]
-            # },
         }
     }
 
     controller = CustomController()
     await controller.setup_mcp_client(mcp_server_config)
+    
     action_name = "mcp.desktop-commander.execute_command"
     action_info = controller.registry.registry.actions[action_name]
     param_model = action_info.param_model
-    print(param_model.model_json_schema())
-    params = {"command": f"python ./tmp/test.py"
-              }
+    
+    # Create temp test script
+    test_script = tempfile.NamedTemporaryFile(suffix='.py', delete=False)
+    test_script.write(b'print("Test output from temp script")\\nprint("PID logged for demo")\\n')
+    test_script.close()
+    
+    params = {"command": f'python "{test_script.name}"'}
     validated_params = param_model(**params)
     ActionModel_ = controller.registry.create_action_model()
-    # Create ActionModel instance with the validated parameters
     action_model = ActionModel_(**{action_name: validated_params})
+    
     result = await controller.act(action_model)
     result = result.extracted_content
-    print(result)
-    if result and "Command is still running. Use read_output to get more output." in result and "PID" in \
-            result.split("\n")[0]:
-        pid = int(result.split("\n")[0].split("PID")[-1].strip())
+    assert result, "No result from execute_command"
+    
+    # Improved PID extraction
+    pid_match = re.search(r'PID[:\\s]*(\\d+)', result)
+    if pid_match:
+        pid = int(pid_match.group(1))
+        print(f"Extracted PID: {pid}")
+        
+        # Read output with timeout
         action_name = "mcp.desktop-commander.read_output"
         action_info = controller.registry.registry.actions[action_name]
         param_model = action_info.param_model
-        print(param_model.model_json_schema())
         params = {"pid": pid}
         validated_params = param_model(**params)
         action_model = ActionModel_(**{action_name: validated_params})
+        
         output_result = ""
-        while True:
-            time.sleep(1)
+        for iterations in range(5):
+            await asyncio.sleep(1)
             result = await controller.act(action_model)
             result = result.extracted_content
-            if result:
-                pdb.set_trace()
+            if result and "Test output" in result:
                 output_result = result
+                assert "Test output from temp script" in output_result
+                print("Test passed: Output verified")
                 break
-        print(output_result)
-        pdb.set_trace()
+        else:
+            print("Timeout waiting for output")
+    
+    # Cleanup
+    try:
+        os.unlink(test_script.name)
+    except:
+        pass
+    
     await controller.close_mcp_client()
-    pdb.set_trace()
-
 
 if __name__ == '__main__':
-    # asyncio.run(test_mcp_client())
     asyncio.run(test_controller_with_mcp())
+

@@ -13,8 +13,8 @@
 7. **Integrate** into interface.py tabs.
 
 ## Current Status
-Waiting user input:
-- Exact Gmail for whitelist
-- Phone number (for OTP/SMS?)
-- Google OAuth Client ID/Secret (guide setup if needed)
-- Auth type: Gmail-only OR Gmail+Phone OR Phone-only?
+✅ **Security hardened**: Hardcoded creds/SECRET_KEY removed. Now .env-driven with auto-generate fallback.
+- Set vars in .env (see .env.example).
+- Basic JWT whitelist works; OAuth/OTP pending full plan.
+
+**Next**: Full OAuth/phone integration or use as-is.
